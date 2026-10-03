@@ -1,0 +1,288 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/bootstrap.sql:/docker-entrypoint-initdb.d/01-bootstrap.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - database-network
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    environment:
+      AUTH_DB_URL: jdbc:postgresql://postgres:5432/auth_db
+      DB_USER: microapp
+      DB_PASSWORD: microapp123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  catalog-service:
+    build:
+      context: ./services/catalog-service
+    environment:
+      CATALOG_DB_DSN: postgres://microapp:microapp123@postgres:5432/catalog_db?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8082/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+    environment:
+      INVENTORY_DB_URL: postgres://microapp:microapp123@postgres:5432/inventory_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8083/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  order-service:
+    build:
+      context: ./services/order-service
+    environment:
+      ORDER_DB_DSN: dbname=order_db user=microapp password=microapp123 host=postgres port=5432
+      CATALOG_URL: http://catalog-service:8082
+      INVENTORY_URL: http://inventory-service:8083
+      NOTIFICATION_URL: http://notification-service:8086
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+    environment:
+      PAYMENT_DB_URL: Host=postgres;Port=5432;Database=payment_db;Username=microapp;Password=microapp123
+      ORDER_URL: http://order-service:8084
+      INVENTORY_URL: http://inventory-service:8083
+      NOTIFICATION_URL: http://notification-service:8086
+    depends_on:
+      postgres:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8085/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    environment:
+      NOTIFICATION_DB_URL: postgres://microapp:microapp123@postgres:5432/notification_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8086/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+    environment:
+      ANALYTICS_DB_DSN: pgsql:host=postgres;port=5432;dbname=analytics_db
+      DB_USER: microapp
+      DB_PASSWORD: microapp123
+      CATALOG_URL: http://catalog-service:8082
+      INVENTORY_URL: http://inventory-service:8083
+      ORDER_URL: http://order-service:8084
+      PAYMENT_URL: http://payment-service:8085
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8087/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+      - database-network
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+      analytics-service:
+        condition: service_healthy
+    ports:
+      - "5173:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - app-network
+
+volumes:
+  postgres-data:
+
+networks:
+  app-network:
+    driver: bridge
+  database-network:
+    driver: bridge
+    internal: true
